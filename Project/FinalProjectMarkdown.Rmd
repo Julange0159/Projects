@@ -1,0 +1,192 @@
+---
+title: "FinalProject"
+author: "Julian Lange"
+subtitle:
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+---
+
+```{r setup, include=FALSE}
+
+# Please leave this code chunk as is. It makes some slight formatting changes to alter the output to be more aesthetically pleasing. 
+
+library(knitr)
+
+# Change the number in set seed to your own favorite number
+set.seed(1818)
+options(width=70)
+options(scipen=99)
+
+
+# this sets text outputted in code chunks to small
+opts_chunk$set(tidy.opts=list(width.wrap=50),tidy=TRUE, size = "vsmall")  
+opts_chunk$set(message = FALSE,                                          
+               warning = FALSE,
+               # "caching" stores objects in code chunks and only rewrites if you change things
+               cache = FALSE,                               
+               # automatically downloads dependency files
+               autodep = TRUE,
+               # 
+               cache.comments = FALSE,
+               # 
+               collapse = TRUE,
+               # change fig.width and fig.height to change the code height and width by default
+               fig.width = 5.5,  
+               fig.height = 4.5,
+               fig.align='center')
+
+
+```
+
+```{r setup-2}
+
+# Always print this out before your assignment
+sessionInfo()
+getwd()
+
+```
+
+
+```{r setup-3}
+
+# load all your libraries in this chunk 
+library('tidyverse')
+# note, do not run install.packages() inside a code chunk. install them in the console outside of a code chunk. 
+
+```
+```{r}
+set.seed(1818)
+library('rsample')
+library('ggplot2')
+library('dplyr')
+library('ISLR')
+library('tidyverse')
+```
+
+```{r}
+#--------------------------------------------------------
+# Classification
+#--------------------------------------------------------
+spotify_df <- 
+  read.csv(here::here("datasets",
+                      "tracks_hit.csv"))
+
+spotify_df <- spotify_df %>% as_tibble() %>% mutate(hit = as.factor(hit))
+
+spotify_split <- initial_split(spotify_df, prop = 0.75)
+spotify_train <- training(spotify_split)
+spotify_test <- testing(spotify_split)
+
+logit_fit1 <- glm(hit ~ acousticness + danceability + energy + liveness + loudness
+                  + instrumentalness + speechiness + tempo + valence,
+                  family = binomial,
+                  data = spotify_train)
+
+summary(logit_fit1)
+(exp(logit_fit1$coefficients[-1])-1)*100
+```
+
+```{r}
+#--------------------------------------------------------
+# ROC Curve
+#--------------------------------------------------------
+library('plotROC')
+preds_train <- predict(logit_fit1, newdata = spotify_train, type = "response")
+preds_test <- predict(logit_fit1, newdata = spotify_test, type = "response")
+
+head(preds_train)
+head(preds_test)
+
+results_train <- data.frame(
+  `truth` = spotify_train   %>% select(hit) %>% 
+    mutate(hit = as.numeric(hit)),
+  `Class1` =  preds_train,
+  `type` = rep("train",length(preds_train))
+)
+
+results_test <- data.frame(
+  `truth` = spotify_test   %>% select(hit) %>% 
+    mutate(hit = as.numeric(hit)),
+  `Class1` =  preds_test,
+  `type` = rep("test",length(preds_test))
+)
+
+results <- bind_rows(results_train,results_test)
+
+results_train %>% slice(1:10)
+results_test %>% slice(1:10)
+
+```
+
+```{r}
+p <- ggplot(results, 
+            aes(m = Class1, d = as.numeric(hit), color = type)) + 
+  geom_roc(labelsize = 3.5, 
+           cutoffs.at = 
+             c(0.99,0.9,0.7,0.5,0.3,0.1,0)) +
+  theme_minimal(base_size = 16)
+print(p)
+calc_auc(p)
+```
+
+```{r}
+#--------------------------------------------------------
+# Random Forest
+#--------------------------------------------------------
+library('randomForest')
+rf_mods <- list()
+oob_err <- NULL
+test_err <- NULL
+for(mtry in 1:9){
+  rf_fit <- randomForest(hit ~ acousticness + danceability + energy + liveness + loudness
+                         + instrumentalness + speechiness + tempo + valence,
+                         data = spotify_train,
+                         mtry = mtry,
+                         na.action = na.roughfix,
+                         ntree = 600)
+  oob_err[mtry] <- rf_fit$err.rate[600]
+  
+  cat(mtry," ")
+}
+
+results_DF <- data.frame(mtry = 1:9, oob_err)
+ggplot(results_DF, aes(x = mtry, y = oob_err)) + geom_point() + theme_minimal()
+
+```
+
+```{r}
+rf_fit <- randomForest(hit ~ acousticness + danceability + energy + liveness + loudness
+                       + instrumentalness + speechiness + tempo + valence, 
+                       data = spotify_df,
+                       type = classification,
+                       mtry = 3,
+                       na.action = na.roughfix,
+                       ntree = 300, 
+                       importance = TRUE)
+
+rf_fit
+
+par(mar=c(2,2,2,2))
+
+plot(rf_fit)
+
+```
+
+```{r}
+feat_imp_df <- importance(rf_fit) %>% 
+  data.frame() %>% 
+  mutate(feature = row.names(.)) 
+
+ggplot(feat_imp_df, aes(x = reorder(feature, MeanDecreaseGini), 
+                        y = MeanDecreaseGini), ) +
+  geom_bar(stat='identity') +
+  coord_flip() +
+  theme_classic() +
+  labs(
+    x     = "Features",
+    y     = "Importance",
+    title = "Feature Importance: <Random Forest>"
+  )
+```
